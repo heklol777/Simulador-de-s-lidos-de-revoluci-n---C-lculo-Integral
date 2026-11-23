@@ -29,9 +29,10 @@ asistente paso a paso con narración por voz.
 - Sin dependencias externas
 
 ## 👥 Integrantes
-- [Nombre 1]
-- [Nombre 2]
-- [Nombre 3]
+- Eric Daniel Rangel Prada
+- Duvan Santiago Romero Mendoza 
+- Andres Felipe Reyes Martinez
+- Sebastian Sanchez Lopez
 
 ## 📄 Licencia
 MIT
