@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="es" data-palette="optica">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>REVOLVE · Simulador Computacional de Sólidos de Revolución</title>
+<meta name="description" content="Laboratorio interactivo 3D de sólidos de revolución: discos, arandelas y cascarones cilíndricos. Cálculo exacto, aproximación de Riemann y convergencia. Cálculo Integral · Ingeniería de Sistemas.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%2338bdf8' stroke-width='2'/><ellipse cx='16' cy='16' rx='5' ry='13' fill='none' stroke='%23f472b6' stroke-width='2'/></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="bg" aria-hidden="true">
+  <span class="aurora a1"></span><span class="aurora a2"></span><span class="aurora a3"></span>
+  <div class="grain"></div>
+</div>
+
+<header class="nav" id="nav">
+  <a class="brand" href="#lab">
+    <svg viewBox="0 0 40 40" class="logo" aria-hidden="true">
+      <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" stroke-width="1.6" opacity=".55"/>
+      <ellipse cx="20" cy="20" rx="6" ry="15" fill="none" stroke="var(--c3)" stroke-width="1.8"/>
+      <ellipse cx="20" cy="20" rx="11" ry="15" fill="none" stroke="var(--c2)" stroke-width="1.2" opacity=".8"/>
+      <circle cx="20" cy="20" r="2.4" fill="var(--c1)"/>
+    </svg>
+    <span>REVOLVE<em>lab</em></span>
+  </a>
+  <nav class="links" aria-label="Secciones">
+    <a href="#lab" data-nav="lab" class="on">Laboratorio</a>
+    <a href="#metodos" data-nav="metodos">Métodos</a>
+    <a href="#casos" data-nav="casos">Casos</a>
+    <a href="#informe" data-nav="informe">Informe</a>
+  </nav>
+  <div class="nav-actions">
+    <button id="soundBtn" class="icon-btn" aria-pressed="true" title="Sonido (M)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path class="wave" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path class="mute" d="M17 9l5 6M22 9l-5 6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      <span id="soundLabel">Sonido</span>
+    </button>
+    <div class="pop-wrap">
+      <button id="exportBtn" class="btn primary" aria-haspopup="true" aria-expanded="false">Exportar <i>▾</i></button>
+      <div class="pop" id="exportPop" hidden>
+        <button data-export="png">🖼️ Imagen PNG del sólido</button>
+        <button data-export="csv">📊 Elementos y volúmenes (CSV)</button>
+        <button data-export="json">⚙️ Configuración (JSON)</button>
+        <button data-export="report">📄 Informe completo (HTML → PDF)</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+<section id="lab" class="lab">
+  <div class="lab-head">
+    <p class="eyebrow">Cálculo Integral · Ingeniería de Sistemas · Proyecto integrador</p>
+    <h1>Sólidos de revolución,<br><span class="grad">capa por capa</span></h1>
+    <p class="lede">Gira una región del plano y observa cómo discos, arandelas o cascarones construyen el volumen.
+      El motor simbólico entrega la antiderivada exacta; el motor numérico suma los elementos y muestra el error en vivo.</p>
+    <div class="kpis">
+      <div class="kpi"><span>Volumen exacto</span><b id="kpiExact">—</b><i id="kpiUnit">cm³</i></div>
+      <div class="kpi"><span>Aproximación de Riemann</span><b id="kpiApprox">—</b><i id="kpiRule">punto medio</i></div>
+      <div class="kpi err"><span>Error relativo</span><b id="kpiError">—</b><i>respecto al valor analítico</i></div>
+      <div class="kpi"><span>Elementos visibles</span><b id="kpiN">—</b><i id="kpiDx">Δx</i></div>
+    </div>
+  </div>
+
+  <div class="lab-grid">
+    <aside class="rail" id="rail" aria-label="Controles del simulador">
+      <div class="rail-scroll">
+        <section class="grp">
+          <h3><i class="dot d1"></i>Modelo matemático</h3>
+          <label class="ctl"><span>Caso de estudio</span>
+            <select id="caseSelect">
+              <option value="hub">3 · Cascarones — Base de hub IoT (impresión 3D)</option>
+              <option value="lente">1 · Discos — Microlente de fibra óptica</option>
+              <option value="buffer">2 · Arandelas — Funda cónica de cable</option>
+              <option value="custom">✏️ Personalizado</option>
+            </select>
+          </label>
+          <div class="seg" id="methodSeg" role="group" aria-label="Método">
+            <button data-method="discos">Discos</button>
+            <button data-method="arandelas">Arandelas</button>
+            <button data-method="cascarones" class="on">Cascarones</button>
+          </div>
+          <label class="ctl"><span>f(x) · perfil exterior</span><input id="fInput" type="text" spellcheck="false" value="x + sin(x)"></label>
+          <div class="chips">
+            <button data-insert="sqrt(x)">√x</button><button data-insert="x^2">x²</button>
+            <button data-insert="sin(x)">sin x</button><button data-insert="cos(x)">cos x</button>
+            <button data-insert="exp(x)">eˣ</button><button data-insert="ln(x)">ln x</button>
+            <button data-insert="pi">π</button>
+          </div>
+          <label class="ctl"><span>g(x) · perfil interior / base</span><input id="gInput" type="text" spellcheck="false" value="0"></label>
+          <div class="two">
+            <label class="ctl"><span>límite a</span><input id="aInput" type="text" spellcheck="false" value="0"></label>
+            <label class="ctl"><span>límite b</span><input id="bInput" type="text" spellcheck="false" value="pi"></label>
+          </div>
+          <label class="ctl"><span>Eje de giro <b id="cLabel">x = 0</b></span>
+            <div class="row"><input id="cRange" type="range" min="-4" max="4" step="0.05" value="0"><input id="cNum" type="number" step="0.05" value="0"></div>
+          </label>
+          <p class="msg err" id="exprError" hidden></p>
+          <p class="msg warn" id="warnBox" hidden></p>
+        </section>
+        <section class="grp">
+          <h3><i class="dot d2"></i>Discretización</h3>
+          <label class="ctl"><span>N · número de elementos <b id="nVal">14</b></span><input id="nRange" type="range" min="2" max="48" step="1" value="14"></label>
+          <label class="ctl"><span>k · elementos construidos <b id="kVal">14</b></span><input id="kRange" type="range" min="1" max="14" step="1" value="14"></label>
+          <div class="row">
+            <button id="playBtn" class="btn wide">▶ Construir</button>
+            <label class="ctl mini"><span>vel <b id="speedVal">6</b>/s</span><input id="speedRange" type="range" min="1" max="24" step="1" value="6"></label>
+          </div>
+          <label class="ctl"><span>Regla numérica</span>
+            <select id="ruleSelect">
+              <option value="medio">Punto medio · O(Δx²)</option>
+              <option value="izq">Extremo izquierdo · O(Δx)</option>
+              <option value="der">Extremo derecho · O(Δx)</option>
+              <option value="trap">Trapecio · O(Δx²)</option>
+            </select>
+          </label>
+          <label class="ctl"><span>Separación entre elementos <b id="gapVal">8%</b></span><input id="gapRange" type="range" min="0" max="0.45" step="0.01" value="0.08"></label>
+        </section>
+        <section class="grp">
+          <h3><i class="dot d3"></i>Escena</h3>
+          <label class="ctl"><span>Opacidad de los elementos <b id="opVal">92%</b></span><input id="opacityRange" type="range" min="0.15" max="1" step="0.01" value="0.92"></label>
+          <label class="sw"><input type="checkbox" id="solidToggle" checked><i></i>Sólido continuo superpuesto</label>
+          <label class="sw"><input type="checkbox" id="wireToggle"><i></i>Malla de alambre</label>
+          <label class="sw"><input type="checkbox" id="gridToggle" checked><i></i>Rejilla y guías</label>
+          <label class="sw"><input type="checkbox" id="partToggle" checked><i></i>Partículas de ambiente</label>
+          <label class="sw"><input type="checkbox" id="orbitToggle" checked><i></i>Órbita automática</label>
+          <label class="ctl"><span>Velocidad de órbita <b id="orbVal">0.25</b></span><input id="orbitSpeed" type="range" min="0" max="1.2" step="0.01" value="0.25"></label>
+        </section>
+        <section class="grp">
+          <h3><i class="dot d4"></i>Render y luz</h3>
+          <label class="ctl"><span>Ángulo de la luz clave <b id="lightVal">38°</b></span><input id="lightRange" type="range" min="-180" max="180" step="1" value="38"></label>
+          <label class="ctl"><span>Intensidad <b id="intVal">1.00</b></span><input id="lightInt" type="range" min="0.3" max="1.8" step="0.01" value="1"></label>
+          <label class="ctl"><span>Halo / bloom <b id="glowVal">0.55</b></span><input id="glowRange" type="range" min="0" max="1.2" step="0.01" value="0.55"></label>
+          <label class="ctl"><span>Calidad</span>
+            <select id="qualitySelect">
+              <option value="baja">Borrador · rápido</option>
+              <option value="normal" selected>Normal · equilibrado</option>
+              <option value="alta">Alta · detalle</option>
+              <option value="ultra">Ultra · presentación</option>
+            </select>
+          </label>
+          <label class="ctl"><span>Paleta</span>
+            <select id="paletteSelect">
+              <option value="optica">Óptica · cian / violeta</option>
+              <option value="filamento">Filamento · ámbar / magenta</option>
+              <option value="circuito">Circuito · lima / azul</option>
+            </select>
+          </label>
+        </section>
+        <div class="rail-foot">
+          <button id="resetBtn" class="btn">↺ Reiniciar</button>
+          <button id="randomBtn" class="btn accent">🎲 Aleatorizar</button>
+        </div>
+        <p class="hint">Arrastra para orbitar · rueda para zoom · clic en un elemento para inspeccionarlo.
+          Atajos: <kbd>espacio</kbd> construir, <kbd>R</kbd> reencuadrar, <kbd>W</kbd> malla, <kbd>G</kbd> rejilla, <kbd>M</kbd> sonido, <kbd>T</kbd> asistente.</p>
+      </div>
+    </aside>
+
+    <div class="stage">
+      <div class="viewport" id="viewport">
+        <canvas id="scene"></canvas>
+        <div class="vp-top">
+          <span class="badge" id="methodBadge">Cascarones cilíndricos</span>
+          <span class="badge ghost" id="caseBadge">Base de hub IoT</span>
+        </div>
+        <div class="vp-tools">
+          <button data-view="reset" title="Reencuadrar (R)">⤾</button>
+          <button data-view="iso">Iso</button>
+          <button data-view="front">Frontal</button>
+          <button data-view="top">Cenital</button>
+          <button id="tutorToggle" class="accent on" title="Asistente paso a paso (T)">🎓 Asistente</button>
+        </div>
+        <div class="vp-hud" id="hud">iniciando motor…</div>
+        <div class="vp-legend" id="legend"></div>
+        <div class="tip" id="tip" hidden></div>
+        <div class="slice-card" id="sliceCard" hidden>
+          <header><b id="scTitle">Elemento</b><button id="scClose" aria-label="Cerrar">✕</button></header>
+          <div id="scBody"></div>
+          <footer><button id="scPrev" class="btn tiny">← anterior</button><button id="scNext" class="btn tiny">siguiente →</button></footer>
+        </div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button data-tab="region" class="on" role="tab">Región 2D</button>
+        <button data-tab="results" role="tab">Exacto vs. numérico</button>
+        <button data-tab="conv" role="tab">Convergencia</button>
+        <button data-tab="deriv" role="tab">Derivación analítica</button>
+      </div>
+      <div class="panels">
+        <div class="panel on" data-panel="region">
+          <canvas id="regionCanvas" class="plot"></canvas>
+          <p class="note" id="regionRead">Pasa el cursor sobre la gráfica para leer valores; las franjas son los elementos de la suma.</p>
+        </div>
+        <div class="panel" data-panel="results">
+          <div class="metrics">
+            <div><span>Exacto (analítico)</span><b id="resExact">—</b></div>
+            <div><span>Aproximado (software)</span><b id="resApprox">—</b></div>
+            <div><span>Error absoluto</span><b id="resAbs">—</b></div>
+            <div><span>Error relativo</span><b id="resRel">—</b></div>
+          </div>
+          <canvas id="barsCanvas" class="plot small"></canvas>
+          <div class="table-wrap">
+            <table id="sliceTable">
+              <thead><tr><th>i</th><th>x*</th><th>f(x*)</th><th>g(x*)</th><th>radio / altura</th><th>ΔV</th><th>V acumulado</th></tr></thead>
+              <tbody id="sliceBody"></tbody>
+            </table>
+          </div>
+          <button id="csvBtn" class="btn tiny">⬇ Descargar esta tabla (CSV)</button>
+        </div>
+        <div class="panel" data-panel="conv">
+          <canvas id="convCanvas" class="plot"></canvas>
+          <p class="note" id="convNote"></p>
+        </div>
+        <div class="panel" data-panel="deriv">
+          <div id="derivBox" class="deriv"></div>
+          <p class="note" id="quadNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ ASISTENTE PASO A PASO ═══════════ -->
+    <aside class="tutor" id="tutor" aria-label="Asistente paso a paso">
+      <div class="tutor-head">
+        <div class="tutor-title">
+          <span class="tutor-icon">🎓</span>
+          <div>
+            <b>Asistente de resolución</b>
+            <small id="tutorSubtitle">Guía paso a paso del problema</small>
+          </div>
+        </div>
+        <button class="icon-btn" id="tutorClose" title="Cerrar asistente (T)">✕</button>
+      </div>
+      <div class="tutor-progress">
+        <div class="tutor-bar"><div id="tutorBar" class="tutor-bar-fill"></div></div>
+        <span id="tutorStepLabel">Paso 1 de 11</span>
+      </div>
+      <div class="tutor-body" id="tutorBody"></div>
+      <div class="tutor-foot">
+        <div class="tutor-nav">
+          <button id="tutorPrev" class="btn tiny">← Anterior</button>
+          <span class="tutor-dots" id="tutorDots"></span>
+          <button id="tutorNext" class="btn tiny primary">Siguiente →</button>
+        </div>
+        <div class="tutor-actions">
+          <button id="tutorAuto" class="btn tiny">▶ Modo guiado</button>
+          <button id="tutorReset" class="btn tiny">↺ Reiniciar</button>
+          <button id="tutorExport" class="btn tiny accent">📄 Exportar</button>
+        </div>
+        <label class="sw mini"><input type="checkbox" id="tutorVoice" checked><i></i>Narración por voz</label>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<section id="metodos" class="band">
+  <p class="eyebrow">Marco teórico</p>
+  <h2>Tres elementos, <span class="grad">una misma integral</span></h2>
+  <p class="lede narrow">Todos los métodos son la misma idea —<em>dividir, aproximar, sumar y tomar el límite</em>— con distinta
+    elección del elemento diferencial. La elección correcta depende de cómo corta el plano al sólido y de si la función se puede invertir.</p>
+  <div class="cards3">
+    <article class="mcard">
+      <svg viewBox="0 0 120 90" class="mini" aria-hidden="true">
+        <ellipse cx="42" cy="45" rx="12" ry="30" fill="var(--c1)" opacity=".25"/>
+        <rect x="42" y="15" width="26" height="60" fill="var(--c1)" opacity=".18"/>
+        <ellipse cx="68" cy="45" rx="12" ry="30" fill="var(--c1)" opacity=".55"/>
+        <ellipse cx="68" cy="45" rx="12" ry="30" fill="none" stroke="var(--c1)" stroke-width="1.6"/>
+        <line x1="10" y1="45" x2="112" y2="45" stroke="var(--ok)" stroke-width="1.4" stroke-dasharray="5 4"/>
+      </svg>
+      <h3>Discos</h3>
+      <p class="eq"><span class="mint"><span class="msign">∫</span><span class="mlim"><b>b</b><i>a</i></span></span>
+        <span class="mvar">V</span> = π <span class="mint"><span class="msign">∫</span><span class="mlim"><b>b</b><i>a</i></span></span> [f(x)]² dx</p>
+      <p>La franja perpendicular al eje genera un disco macizo de radio <i>f(x)</i> y espesor Δx:
+        <b>ΔV = π[f(x*)]²Δx</b>. Al sumar y tomar el límite aparece la integral del área de la sección.</p>
+      <p class="tag">Equivale al <em>slicing</em> de una impresora 3D o de un renderizador por capas.</p>
+    </article>
+    <article class="mcard">
+      <svg viewBox="0 0 120 90" class="mini" aria-hidden="true">
+        <ellipse cx="62" cy="45" rx="14" ry="32" fill="var(--c3)" opacity=".35"/>
+        <ellipse cx="62" cy="45" rx="6" ry="14" fill="var(--bg0)"/>
+        <ellipse cx="62" cy="45" rx="14" ry="32" fill="none" stroke="var(--c3)" stroke-width="1.6"/>
+        <ellipse cx="62" cy="45" rx="6" ry="14" fill="none" stroke="var(--c3)" stroke-width="1.4" opacity=".8"/>
+        <line x1="10" y1="45" x2="112" y2="45" stroke="var(--ok)" stroke-width="1.4" stroke-dasharray="5 4"/>
+      </svg>
+      <h3>Arandelas</h3>
+      <p class="eq">V = π <span class="mint"><span class="msign">∫</span><span class="mlim"><b>b</b><i>a</i></span></span> ([R(x)]² − [r(x)]²) dx</p>
+      <p>Con una cavidad, la sección es una corona: <b>ΔV = π([R]² − [r]²)Δx</b>. Ojo: no es π(R−r)².
+        Con eje desplazado <i>y = c</i> los radios pasan a ser R−c y r−c.</p>
+      <p class="tag">Es la operación booleana de diferencia de cualquier CAD.</p>
+    </article>
+    <article class="mcard">
+      <svg viewBox="0 0 120 90" class="mini" aria-hidden="true">
+        <path d="M30 74 a30 10 0 0 0 60 0 v-46 a30 10 0 0 1 -60 0 z" fill="var(--c2)" opacity=".28"/>
+        <ellipse cx="60" cy="28" rx="30" ry="10" fill="none" stroke="var(--c2)" stroke-width="1.6"/>
+        <ellipse cx="60" cy="28" rx="20" ry="6.6" fill="none" stroke="var(--c2)" stroke-width="1.2" opacity=".7"/>
+        <line x1="60" y1="6" x2="60" y2="86" stroke="var(--ok)" stroke-width="1.4" stroke-dasharray="5 4"/>
+      </svg>
+      <h3>Cascarones cilíndricos</h3>
+      <p class="eq">V = 2π <span class="mint"><span class="msign">∫</span><span class="mlim"><b>b</b><i>a</i></span></span> x · f(x) dx</p>
+      <p>La franja paralela al eje genera un tubo: <b>ΔV = 2π·x*·f(x*)·Δx</b>, porque
+        (x+Δx/2)² − (x−Δx/2)² = 2x·Δx. Ventaja decisiva cuando despejar x de y = f(x) no es elemental.</p>
+      <p class="tag">Cada cascarón es una pared concéntrica del recorrido de la boquilla.</p>
+    </article>
+  </div>
+</section>
+
+<section id="casos" class="band alt">
+  <p class="eyebrow">Contextualización obligatoria · Ingeniería de Sistemas</p>
+  <h2>Tres piezas <span class="grad">reales del programa</span></h2>
+  <p class="lede narrow">Los tres problemas pertenecen a la misma disciplina: óptica de fibra, protección de cableado y
+    fabricación aditiva de un dispositivo IoT. Cada uno carga su modelo completo en el laboratorio.</p>
+  <div class="cards3" id="caseCards">
+    <article class="ccard" data-case="lente">
+      <span class="num">01</span><span class="pill p1">Discos</span>
+      <h3>Microlente parabólica de acoplamiento</h3>
+      <p>Colimador torneado de un módulo de fibra óptica. Perfil <b>f(x)=√x</b> mm, 0 ≤ x ≤ 4, girado alrededor del eje óptico.</p>
+      <p class="eq">V = π <span class="mint"><span class="msign">∫</span><span class="mlim"><b>4</b><i>0</i></span></span> x dx = <b>8π ≈ 25.1327 mm³</b></p>
+      <ul><li>Sílice 2.20 g/cm³ → <b>0.0553 g</b> por lente</li><li>Lote de 10 000 unidades → <b>0.553 kg</b></li></ul>
+      <button class="btn accent wide" data-load="lente">Cargar en el laboratorio →</button>
+    </article>
+    <article class="ccard" data-case="buffer">
+      <span class="num">02</span><span class="pill p3">Arandelas</span>
+      <h3>Funda cónica de cable de fibra</h3>
+      <p>Recubrimiento inyectado: exterior <b>R(x)=3−x/2</b> cm, canal interior <b>r(x)=1</b> cm. El límite superior se deduce de R(x)=r(x) ⇒ x=4.</p>
+      <p class="eq">V = π <span class="mint"><span class="msign">∫</span><span class="mlim"><b>4</b><i>0</i></span></span> (8 − 3x + x²/4) dx = <b>40π/3 ≈ 41.8879 cm³</b></p>
+      <ul><li>Polímero LSZH 1.20 g/cm³ → <b>50.27 g</b></li><li>Eje desplazado y=−1 → <b>64π/3</b></li></ul>
+      <button class="btn accent wide" data-load="buffer">Cargar en el laboratorio →</button>
+    </article>
+    <article class="ccard" data-case="hub">
+      <span class="num">03</span><span class="pill p2">Cascarones</span>
+      <h3>Base ondulada de hub IoT impresa en 3D</h3>
+      <p>Pared de perfil <b>f(x)=x+sen x</b> cm, 0 ≤ x ≤ π, girada alrededor del eje vertical. Por arandelas habría que invertir una ecuación trascendente.</p>
+      <p class="eq">V = 2π <span class="mint"><span class="msign">∫</span><span class="mlim"><b>π</b><i>0</i></span></span> (x² + x sen x) dx = <b>2π⁴/3 + 2π² ≈ 84.6786 cm³</b></p>
+      <ul><li>PLA 1.24 g/cm³ → <b>105.00 g</b></li><li>Filamento de 1.75 mm → <b>35.2 m</b></li></ul>
+      <button class="btn accent wide" data-load="hub">Cargar en el laboratorio →</button>
+    </article>
+  </div>
+</section>
+
+<section id="informe" class="band">
+  <p class="eyebrow">Entregables</p>
+  <h2>Del laboratorio <span class="grad">al PDF</span></h2>
+  <p class="lede narrow">El informe se genera con los datos del equipo y con el estado actual del simulador:
+    marco teórico, los tres desarrollos analíticos, la verificación por cuadratura y Pappus, la tabla de elementos y las conclusiones.
+    Se descarga como HTML con estilos de impresión: ábrelo y usa <em>Imprimir → Guardar como PDF</em>.</p>
+  <div class="deliver">
+    <form class="dform" id="delivForm" autocomplete="off">
+      <h3>Datos de portada y enlaces</h3>
+      <label class="ctl"><span>Integrantes</span><input id="dMembers" type="text" placeholder="Nombre 1 · Nombre 2 · Nombre 3"></label>
+      <label class="ctl"><span>Institución y asignatura</span><input id="dGroup" type="text" placeholder="Universidad · Cálculo Integral · Ing. de Sistemas"></label>
+      <div class="two">
+        <label class="ctl"><span>Repositorio</span><input id="dRepo" type="url" placeholder="https://github.com/…"></label>
+        <label class="ctl"><span>App en la nube</span><input id="dApp" type="url" placeholder="https://…"></label>
+      </div>
+      <label class="ctl"><span>Video de sustentación</span><input id="dVideo" type="url" placeholder="https://youtu.be/…"></label>
+      <p class="hint">Se guardan en este navegador. La app no tiene login, así que no requiere credenciales de prueba.</p>
+    </form>
+    <div class="dside">
+      <h3>Exportar</h3>
+      <button id="reportBtn" class="btn primary wide">📄 Generar informe completo</button>
+      <button id="pngBtn2" class="btn wide">🖼️ Imagen del sólido (PNG)</button>
+      <button id="csvBtn2" class="btn wide">📊 Tabla de elementos (CSV)</button>
+      <button id="jsonBtn2" class="btn wide">⚙️ Configuración (JSON)</button>
+      <h3>Arquitectura del código</h3>
+      <ul class="arch">
+        <li><b>Parser</b> — tokeniza con multiplicación implícita y construye el AST de f y g.</li>
+        <li><b>Motor simbólico</b> — expande, agrupa términos semejantes e integra por reglas y por partes; entrega F(x).</li>
+        <li><b>Motor numérico</b> — sumas de Riemann (4 reglas) con el aporte ΔV de cada elemento.</li>
+        <li><b>Verificación</b> — cuadratura Gauss–Legendre compuesta y teorema de Pappus como controles independientes.</li>
+        <li><b>Geometría</b> — mallas de revolución por anillos; cada elemento es un tramo de cilindro con sus tapas.</li>
+        <li><b>Render</b> — Canvas 2D con orden del pintor, culling, luz clave + relleno + rim, niebla, bloom y partículas.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <span>REVOLVE lab · Simulador Computacional de Sólidos de Revolución</span>
+  <span>HTML + CSS + JavaScript, sin dependencias externas · funciona sin conexión</span>
+</footer>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="app.js" defer></script>
+</body>
+</html>
