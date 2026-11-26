@@ -19,7 +19,7 @@ asistente paso a paso con narración por voz.
 3. Funciona 100% offline
 
 ## 🌐 Versión en línea
-🔗 [Probar la app en GitHub Pages](https://heklol777.github.io/Simulador-de-s-lidos-de-revoluci-n---C-lculo-Integral/)
+🔗 [Probar la app en GitHub Pages](https://zingy-peony-8fa67a.netlify.app/)
 
 ## 🛠️ Stack tecnológico
 - HTML5 + CSS3 + JavaScript puro
