@@ -25,15 +25,22 @@ function download(name, data, mime) {
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-
 const FUNCS = { sin: Math.sin, cos: Math.cos, tan: Math.tan, sqrt: Math.sqrt, exp: Math.exp,
   ln: Math.log, log: Math.log, abs: Math.abs, sinh: Math.sinh, cosh: Math.cosh, atan: Math.atan };
 const NAMES = Object.keys(FUNCS).concat(['x', 'pi', 'e']).sort((a, b) => b.length - a.length);
 
+/* ═══ Limpia prefijos tipo f(x)=, g(x)=, y= antes de parsear ═══ */
+function cleanExpr(src) {
+  let s = String(src == null ? '' : src).trim();
+  s = s.replace(/^\s*[fFgGyY]\s*\(\s*x\s*\)\s*=\s*/, '');
+  s = s.replace(/^\s*[yY]\s*=\s*/, '');
+  return s.trim();
+}
+
 function tokenize(src) {
   const s = String(src).replace(/π/g, 'pi').replace(/√/g, 'sqrt').replace(/\*\*/g, '^')
     .replace(/,/g, '.').replace(/\s+/g, '').toLowerCase();
-  const raw = []; let i = 0;
+  const raw = [];  let i = 0;
   const isD = c => (c >= '0' && c <= '9') || c === '.';
   const isA = c => c >= 'a' && c <= 'z';
   while (i < s.length) {
@@ -51,9 +58,10 @@ function tokenize(src) {
       }
       i = j;
     }
-    else if ('+-*/^()'.indexOf(c) >= 0) { raw.push({ t: c }); i++; }
+    else if ('+-/^()'.indexOf(c) >= 0) { raw.push({ t: c }); i++; }
     else throw new Error('Símbolo no admitido: «' + c + '»');
   }
+  // ✅ Multiplicación implícita ahora usa '*' (único tipo de nodo producto)
   const out = [];
   for (let k = 0; k < raw.length; k++) {
     const cur = raw[k], prev = out[out.length - 1];
@@ -67,7 +75,9 @@ function tokenize(src) {
   return out;
 }
 function parse(src) {
-  const tk = tokenize(src); let p = 0;
+  const cleaned = cleanExpr(src);
+  if (!cleaned) throw new Error('Expresión incompleta');
+  const tk = tokenize(cleaned); let p = 0;
   const peek = () => tk[p];
   const eat = t => (tk[p] && tk[p].t === t ? tk[p++] : null);
   function expr() { let n = term(); while (peek() && (peek().t === '+' || peek().t === '-')) { const o = tk[p++].t; n = { t: o, a: n, b: term() }; } return n; }
@@ -94,6 +104,7 @@ function parse(src) {
   return n;
 }
 function evalNode(n, x) {
+  if (!n) return NaN;
   switch (n.t) {
     case 'num': return n.v;
     case 'var': return x;
@@ -101,14 +112,13 @@ function evalNode(n, x) {
     case 'neg': return -evalNode(n.a, x);
     case '+': return evalNode(n.a, x) + evalNode(n.b, x);
     case '-': return evalNode(n.a, x) - evalNode(n.b, x);
-    case '*': return evalNode(n.a, x) * evalNode(n.b, x);
+    case '*': return evalNode(n.a, x) * evalNode(n.b, x);   // ✅ único caso producto
     case '/': return evalNode(n.a, x) / evalNode(n.b, x);
     case '^': return Math.pow(evalNode(n.a, x), evalNode(n.b, x));
     case 'f': return FUNCS[n.n](evalNode(n.a, x));
   }
   return NaN;
 }
-
 const num = v => ({ t: 'num', v });
 const VAR = { t: 'var' };
 const PI = { t: 'const', name: 'pi' };
@@ -116,7 +126,6 @@ const add = (a, b) => ({ t: '+', a, b }), sub = (a, b) => ({ t: '-', a, b });
 const mul = (a, b) => ({ t: '*', a, b }), div = (a, b) => ({ t: '/', a, b });
 const pow = (a, b) => ({ t: '^', a, b }), neg = a => ({ t: 'neg', a });
 const fn = (n, a) => ({ t: 'f', n, a });
-
 function cst(n) {
   if (!n) return null;
   if (n.t === 'num') return n.v;
@@ -130,7 +139,8 @@ function cst(n) {
 }
 const constVal = n => cst(n);
 function simp(n) {
-  if (!n || n.t === 'num' || n.t === 'var' || n.t === 'const') return n;
+  if (!n) return num(0);                                   // ✅ guarda
+  if (n.t === 'num' || n.t === 'var' || n.t === 'const') return n;
   if (n.t === 'f') return fn(n.n, simp(n.a));
   if (n.t === 'neg') { const a = simp(n.a); if (a.t === 'num') return num(-a.v); if (a.t === 'neg') return a.a; return neg(a); }
   const a = simp(n.a), b = simp(n.b);
@@ -157,18 +167,20 @@ function simp(n) {
   return n;
 }
 function xPow(n) {
+  if (!n) return null;
   if (n.t === 'var') return 1;
   if (n.t === '^' && n.a.t === 'var') return cst(n.b);
   if (n.t === 'f' && n.n === 'sqrt' && n.a.t === 'var') return 0.5;
   return null;
 }
 function termsOf(n) {
+  if (!n) return [num(0)];                                 // ✅ guarda
   if (n.t === '+') return termsOf(n.a).concat(termsOf(n.b));
   if (n.t === '-') return termsOf(n.a).concat(termsOf(n.b).map(neg));
   if (n.t === 'neg') return termsOf(n.a).map(neg);
   return [n];
 }
-function factors(n) { return n.t === '*' ? factors(n.a).concat(factors(n.b)) : [n]; }
+function factors(n) { return n && n.t === '*' ? factors(n.a).concat(factors(n.b)) : [n]; }
 function ser(n) {
   if (!n) return '?';
   if (n.t === 'num') return short(n.v);
@@ -184,6 +196,7 @@ function mulTerm(u, v) {
   return simp(mul(u, v));
 }
 function expand(n) {
+  if (!n) return num(0);
   n = simp(n);
   if (n.t === '+') return simp(add(expand(n.a), expand(n.b)));
   if (n.t === '-') return simp(sub(expand(n.a), expand(n.b)));
@@ -202,7 +215,7 @@ function expand(n) {
     }
     return simp(pow(expand(n.a), n.b));
   }
-  if (n.t === '*') {
+  if (n.t === '*') {                                        // ✅ ahora maneja '*'
     const A = termsOf(expand(n.a)), B = termsOf(expand(n.b));
     if (A.length * B.length > 140) return simp(mul(expand(n.a), expand(n.b)));
     let acc = null;
@@ -224,7 +237,7 @@ function collectTerms(n) {
   for (const t of termsOf(simp(n))) {
     let coef = 1, xp = 0; const others = [];
     for (const f of factors(t)) {
-      if (f.t === 'num') { coef *= f.v; continue; }
+      if (f.t === 'num') { coef *= f.v; continue; }         // ✅ coef *= (antes era '=')
       const p = xPow(f);
       if (p !== null) { xp += p; continue; }
       others.push(f);
@@ -252,7 +265,6 @@ function termsNode(ts) {
   return acc || num(0);
 }
 const collect = n => termsNode(collectTerms(n));
-
 function linOf(n) {
   let a = 0, b = 0;
   for (const t of termsOf(simp(n))) {
@@ -315,7 +327,6 @@ function integrate(n) {
   for (const t of ts) { const it = integrateTerm(t); if (!it) return null; acc = acc ? add(acc, it) : it; }
   return acc ? collect(acc) : num(0);
 }
-
 function rat(v) {
   if (!isFinite(v)) return null;
   for (let q = 1; q <= 24; q++) { const p = Math.round(v * q); if (Math.abs(v - p / q) < 1e-10) return [p, q]; }
@@ -324,10 +335,11 @@ function rat(v) {
 function numHTML(v) {
   const r = rat(v);
   if (r && r[1] > 1 && Math.abs(r[0]) < 1000)
-    return '<span class="mfrac"><span>' + Math.abs(r[0]) + '</span><span>' + r[1] + '</span></span>' + (r[0] < 0 ? '' : '');
+    return '<span class="mfrac"><span>' + Math.abs(r[0]) + '</span><span>' + r[1] + '</span></span>';
   return short(v);
 }
 function mh(n, prec) {
+  if (!n) return '';                                        // ✅ guarda
   prec = prec || 0;
   const wrap = (s, p) => (p > prec ? '(' + s + ')' : s);
   switch (n.t) {
@@ -369,7 +381,6 @@ function closedForm(v) {
   }
   return null;
 }
-
 const GL_X = [-0.9602898564975363, -0.7966664774136267, -0.5255324099163290, -0.1834346424956498,
   0.1834346424956498, 0.5255324099163290, 0.7966664774136267, 0.9602898564975363];
 const GL_W = [0.1012285362903763, 0.2223810344533745, 0.3137066458778873, 0.3626837833783620,
@@ -383,11 +394,12 @@ function gaussQuad(f, a, b, panels) {
   }
   return s;
 }
-
 function analyze(method, fStr, gStr, aStr, bStr, c) {
-  const fNode = parse(fStr);
-  const gNode = method === 'discos' ? num(0) : parse(gStr);
-  const a = constVal(parse(aStr)), b = constVal(parse(bStr));
+  const fc = cleanExpr(fStr), gc = cleanExpr(gStr), ac = cleanExpr(aStr), bc = cleanExpr(bStr);
+  if (!fc) throw new Error('Escribe la función f(x), por ejemplo: 2x');
+  const fNode = parse(fc);
+  const gNode = method === 'discos' ? num(0) : parse(gc || '0');   // ✅ vacío = 0
+  const a = constVal(parse(ac || '0')), b = constVal(parse(bc || '0'));
   if (a === null || b === null) throw new Error('Los límites deben ser constantes (0, 4, pi, 3/2…)');
   if (!(b > a)) throw new Error('Se requiere b > a');
   const f = x => evalNode(fNode, x), g = x => evalNode(gNode, x);
@@ -414,7 +426,7 @@ function analyze(method, fStr, gStr, aStr, bStr, c) {
     for (let i = 0; i <= 60; i++) { const x = a + (b - a) * i / 60; lo = Math.min(lo, g(x)); hi = Math.max(hi, f(x)); }
     if (c > lo + 1e-9 && c < hi - 1e-9) warns.push('El eje y = c atraviesa la región: la fórmula R² − r² no es válida ahí.');
   }
-  return { method, fStr, gStr, aStr, bStr, a, b, c, f, g, fNode, gNode, integrand, expanded, F, V, quad, warns, elemental: !!F };
+  return { method, fStr: fc, gStr: gc, aStr: ac, bStr: bc, a, b, c, f, g, fNode, gNode, integrand, expanded, F, V, quad, warns, elemental: !!F };
 }
 function riemann(M, N, rule) {
   const dx = (M.b - M.a) / N, edges = new Float64Array(N + 1);
@@ -433,7 +445,6 @@ function riemann(M, N, rule) {
   return { N, dx, edges, pts, dv, acc, total, rule };
 }
 const RULE_NAME = { medio: 'punto medio', izq: 'extremo izquierdo', der: 'extremo derecho', trap: 'trapecio' };
-
 const PRESETS = {
   lente: {
     id: 'lente', method: 'discos', f: 'sqrt(x)', g: '0', a: '0', b: '4', c: 0, N: 12,
@@ -503,7 +514,6 @@ function loadState() {
     if (raw) { const o = JSON.parse(raw); for (const k in S) if (k in o && typeof o[k] === typeof S[k]) S[k] = o[k]; }
   } catch (e) {}
 }
-
 function Mesh() { this.v = []; this.f = []; }
 Mesh.prototype.vert = function (x, y, z) { this.v.push(x, y, z); return this.v.length / 3 - 1; };
 Mesh.prototype.quad = function (a, b, c, d, col, slice, two, emi) {
@@ -625,12 +635,10 @@ function buildScene() {
   for (const m of meshes) { m.px = new Float64Array(m.v.length / 3); m.py = new Float64Array(m.v.length / 3); m.pz = new Float64Array(m.v.length / 3); }
   initParticles();
 }
-
 const CAM = { yaw: 0.85, pitch: 0.42, dist: 10, tyaw: 0.85, tpitch: 0.42, tdist: 10, target: [0, 0, 0] };
 const VIEW = { w: 800, h: 500, dpr: 1, cx: 0, cy: 0, cz: 0, rx: 1, ry: 0, rz: 0, ux: 0, uy: 1, uz: 0, fx: 0, fy: 0, fz: 1, s: 500 };
 let canvas, ctx, glowCv, glowCtx, particles = [], dragging = false, lastPointer = null, moved = 0, faces = [], fps = 60, frameAcc = 0, frameCount = 0, hudTimer = 0;
 const pointers = new Map(); let pinchDist = 0;
-
 function initParticles() {
   const q = QUALITY[S.quality], b = SCENE.bounds; if (!b) return;
   particles = [];
@@ -667,8 +675,7 @@ function updateCamera(dt) {
   VIEW.cz = t[2] + CAM.dist * cp * Math.cos(CAM.yaw);
   let fx = t[0] - VIEW.cx, fy = t[1] - VIEW.cy, fz = t[2] - VIEW.cz;
   const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
-  let rx = fz * 1 - fy * 0, ry = fx * 0 - fz * 0, rz = fy * 0 - fx * 1;
-  rx = fz; ry = 0; rz = -fx;
+  let rx = fz, ry = 0, rz = -fx;
   const rl = Math.hypot(rx, ry, rz) || 1; rx /= rl; ry /= rl; rz /= rl;
   const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
   VIEW.fx = fx; VIEW.fy = fy; VIEW.fz = fz; VIEW.rx = rx; VIEW.ry = ry; VIEW.rz = rz;
@@ -739,7 +746,7 @@ function render3D(dt) {
       const amb = 0.24;
       let r = base[0] * (amb + key * 0.85 + fill) * boost + pal.inner[0] * rim * 0.5 + 255 * spec + base[0] * f.emi * 0.5;
       let g = base[1] * (amb + key * 0.85 + fill) * boost + pal.inner[1] * rim * 0.5 + 255 * spec + base[1] * f.emi * 0.5;
-      bl = base[2] * (amb + key * 0.85 + fill) * boost + pal.inner[2] * rim * 0.5 + 255 * spec + base[2] * f.emi * 0.5;
+      let bl = base[2] * (amb + key * 0.85 + fill) * boost + pal.inner[2] * rim * 0.5 + 255 * spec + base[2] * f.emi * 0.5;
       const fog = clamp((z - fogNear) / (fogFar - fogNear), 0, 1) * 0.62;
       r = lerp(r, pal.bg[0] + 8, fog); g = lerp(g, pal.bg[1] + 10, fog); bl = lerp(bl, pal.bg[2] + 18, fog);
       f.style = 'rgba(' + (r | 0) + ',' + (g | 0) + ',' + (bl | 0) + ',' + alpha.toFixed(3) + ')';
@@ -771,7 +778,6 @@ function render3D(dt) {
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)');
   ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
 }
-let bl = 0;
 function drawGrid(pal) {
   const b = SCENE.bounds, step = Math.max(0.25, Math.pow(10, Math.floor(Math.log10(b.radius))) / 2);
   const y = b.lo[1] - b.radius * 0.12, ext = b.radius * 2.4;
@@ -873,7 +879,6 @@ function pickSlice(mx, my) {
   }
   return -1;
 }
-
 function setupPlot(cv, h) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = cv.clientWidth || 600, hh = h || cv.clientHeight || 300;
@@ -1006,15 +1011,14 @@ function drawConv() {
   const ratio = e1 > 1e-14 ? e0 / e1 : null;
   $('#convNote').innerHTML = 'Curvas en escala log-log. <b>Punto medio</b> y <b>trapecio</b> son O(Δx²): al duplicar N el error se divide entre ≈4' +
     (ratio ? ' (aquí ' + ratio.toFixed(2) + '× entre N=8 y N=16)' : '') +
-    '. Los <b>extremos</b> son O(Δx): solo se divide entre 2. Cuando el integrando es lineal, el punto medio es exacto y su error cae al ruido de máquina (~1e-14), como ocurre en el caso de la microlente.';
+    '. Los <b>extremos</b> son O(Δx): solo se divide entre 2. Cuando el integrando es lineal, el punto medio es exacto y su error cae al ruido de máquina (~1e-14).';
 }
-
 function renderDeriv() {
   if (!MODEL) return;
   const M = MODEL, box = $('#derivBox');
   const aS = mh(num(M.a)), bS = mh(num(M.b));
-  const formula = M.method === 'discos' ? 'π ' + integralHTML('[' + mh(M.fNode) + (M.c ? ' − ' + short(M.c) : '') + ']<span class="msup">2</span>', aS, bS)
-    : M.method === 'arandelas' ? 'π ' + integralHTML('([' + mh(M.fNode) + (M.c ? ' − ' + short(M.c) : '') + ']<span class="msup">2</span> − [' + mh(M.gNode) + (M.c ? ' − ' + short(M.c) : '') + ']<span class="msup">2</span>)', aS, bS)
+  const formula = M.method === 'discos' ? 'π ' + integralHTML('[' + mh(M.fNode) + (M.c ? ' − ' + short(M.c) : '') + '] <span class="msup">2</span>', aS, bS)
+    : M.method === 'arandelas' ? 'π ' + integralHTML('([' + mh(M.fNode) + (M.c ? ' − ' + short(M.c) : '') + '] <span class="msup">2</span> − [' + mh(M.gNode) + (M.c ? ' − ' + short(M.c) : '') + '] <span class="msup">2</span>)', aS, bS)
     : '2π ' + integralHTML('(' + (M.c ? 'x − ' + short(M.c) : 'x') + ')·(' + mh(M.fNode) + ' − ' + mh(M.gNode) + ')', aS, bS);
   const preset = PRESETS[S.caseId];
   let html = '';
@@ -1029,8 +1033,7 @@ function renderDeriv() {
     html += '<h4>5 · Teorema fundamental del cálculo</h4><div class="step">V = F(' + bS + ') − F(' + aS + ') = ' +
       nf(evalNode(M.F, M.b), 8) + ' − (' + nf(evalNode(M.F, M.a), 8) + ')</div>';
   } else {
-    html += '<h4>4 · Antiderivada</h4><div class="step"><small>El integrando no tiene primitiva elemental con las reglas del motor. ' +
-      'Se toma como referencia la cuadratura Gauss–Legendre compuesta (220 paneles × 8 nodos), con error del orden de 1e-12.</small></div>';
+    html += '<h4>4 · Antiderivada</h4><div class="step"><small>El integrando no tiene primitiva elemental con las reglas del motor. Se toma como referencia la cuadratura Gauss–Legendre compuesta (220 paneles × 8 nodos).</small></div>';
   }
   html += '<h4>6 · Resultado</h4><div class="step res">V = ' + (CLOSED ? CLOSED + ' ≈ ' : '') + nf(M.V, 10) + ' ' + unitV() + '</div>';
   html += '<h4>7 · Verificación independiente</h4><div class="step"><small>Cuadratura de control: ' + nf(M.quad, 10) +
@@ -1076,7 +1079,7 @@ function syncUI() {
     const x = RIE.pts[i], fv = M.f(x), gv = M.g(x);
     const geo = M.method === 'cascarones' ? 'r=' + nf(x - M.c, 3) + ' h=' + nf(fv - gv, 3)
       : 'R=' + nf(fv - M.c, 3) + (M.method === 'arandelas' ? ' r=' + nf(gv - M.c, 3) : '');
-    rows += '<tr data-i="' + i + '" class="' + (i === S.selected ? 'sel ' : '') + (i < S.k ? 'done' : 'todo') + '">' +
+    rows += '<tr data-i="' + i + '" class="' + (i === S.selected ? 'sel' : '') + (i < S.k ? 'done' : 'todo') + '">' +
       '<td>' + (i + 1) + '</td><td>' + nf(x, 4) + '</td><td>' + nf(fv, 4) + '</td><td>' + nf(gv, 4) + '</td><td>' + geo + '</td>' +
       '<td>' + nf(RIE.dv[i], 5) + '</td><td>' + nf(RIE.acc[i], 5) + '</td></tr>';
   }
@@ -1102,7 +1105,6 @@ function selectSlice(i, quiet) {
   invalidate('panels'); invalidate('scene');
   if (i >= 0 && !quiet) Sound.tick(i, S.N);
 }
-
 const Sound = {
   ctx: null, master: null,
   ensure() {
@@ -1135,7 +1137,6 @@ const Sound = {
   chord() { [0, 4, 7, 12].forEach((n, i) => setTimeout(() => this.tone(196 * Math.pow(2, n / 12), 0.7, 'sine', 0.28), i * 70)); },
   click() { this.tone(880, 0.05, 'square', 0.10); }
 };
-
 function exportPNG() {
   if (!canvas) return;
   const out = document.createElement('canvas');
@@ -1195,64 +1196,26 @@ function buildReport() {
   P.push('<p><b>Modelado 3D y cálculo de volúmenes aplicado a Ingeniería de Sistemas</b></p>');
   P.push('<p>Integrantes: ' + d.members + '</p><p>Proyecto integrador · ' + new Date().toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }) + '</p></div>');
   P.push('<h2>1. Introducción</h2><p>El cálculo de volúmenes de sólidos de revolución aparece de forma recurrente en Ingeniería de Sistemas: diseño de componentes ópticos, estimación de material en fabricación aditiva y modelado geométrico de los motores de renderizado. Este proyecto integra la teoría del Cálculo Integral con la programación y la computación gráfica mediante una aplicación web que plantea, resuelve y visualiza los tres métodos clásicos.</p>');
-  P.push('<p>La conexión conceptual es directa: un <i>slicer</i> de impresión 3D aproxima un objeto por capas (discos y arandelas) y un motor gráfico aproxima superficies por mallas. Ambos son la misma idea de la integral definida: dividir, aproximar y sumar hasta el límite. El simulador hace visible ese proceso: el usuario controla N, observa cómo se apilan los elementos y comprueba cómo la suma de Riemann converge al valor exacto. El equipo es unidisciplinar (Sistemas), por lo que los tres ejemplos se contextualizan en esa disciplina.</p>');
+  P.push('<p>La conexión conceptual es directa: un <i>slicer</i> de impresión 3D aproxima un objeto por capas (discos y arandelas) y un motor gráfico aproxima superficies por mallas. Ambos son la misma idea de la integral definida: dividir, aproximar y sumar hasta el límite.</p>');
   P.push('<h2>2. Marco teórico</h2>');
-  P.push('<h3>2.1 La integral como límite de sumas</h3><p>Para f continua en [a,b], con Δx=(b−a)/n y x*ᵢ en cada subintervalo: ∫ₐᵇ f(x)dx = lím<sub>n→∞</sub> Σ f(x*ᵢ)Δx. Si A(x) es el área de la sección transversal perpendicular al eje, el volumen es V=∫ₐᵇ A(x)dx (principio de Cavalieri).</p>');
-  P.push('<h3>2.2 Discos</h3><p>Al girar la región bajo y=f(x) alrededor del eje x, la sección es un círculo de radio f(x*): ΔV=π[f(x*)]²Δx. Tomando el límite:</p><div class="eq">V = π ∫ₐᵇ [f(x)]² dx &nbsp;·&nbsp; con eje desplazado y=c: V = π ∫ₐᵇ [f(x)−c]² dx</div>');
-  P.push('<h3>2.3 Arandelas</h3><p>Si la región está entre R(x) ≥ r(x) ≥ 0, la sección es una corona de área π([R]²−[r]²):</p><div class="eq">V = π ∫ₐᵇ ([R(x)]² − [r(x)]²) dx &nbsp;·&nbsp; eje y=c: V = π ∫ₐᵇ ([R−c]² − [r−c]²) dx</div><p><small>Advertencia: π∫(R−r)²dx es incorrecto; el área de la corona no es el cuadrado de la diferencia.</small></p>');
-  P.push('<h3>2.4 Cascarones cilíndricos</h3><p>La franja vertical de espesor Δx girada alrededor del eje y genera un tubo de radio medio x* y altura f(x*). Como (x+Δx/2)²−(x−Δx/2)² = 2x·Δx, resulta ΔV=2πx*f(x*)Δx y:</p><div class="eq">V = 2π ∫ₐᵇ x·f(x) dx &nbsp;·&nbsp; general: V = 2π ∫ₐᵇ (x−c)[f(x)−g(x)] dx</div>');
-  P.push('<h3>2.5 Error de la aproximación</h3><p>Punto medio y trapecio: |E| = O(Δx²), con |E| ≤ K(b−a)³/(24n²) en el punto medio. Extremos izquierdo y derecho: O(Δx). Duplicar N divide el error del punto medio entre ≈4, lo que el simulador verifica en la pestaña de convergencia.</p>');
-  P.push('<h3>2.6 Verificación independiente</h3><p>Teorema de Pappus–Guldin: V = 2π·d̄·A, con A el área de la región y d̄ la distancia de su centroide al eje. Se usa como control de los tres resultados, junto con una cuadratura Gauss–Legendre compuesta de 220 paneles.</p>');
+  P.push('<h3>2.1 Discos</h3><div class="eq">V = π ∫ₐᵇ [f(x)]² dx</div>');
+  P.push('<h3>2.2 Arandelas</h3><div class="eq">V = π ∫ₐᵇ ([R(x)]² − [r(x)]²) dx</div>');
+  P.push('<h3>2.3 Cascarones cilíndricos</h3><div class="eq">V = 2π ∫ₐᵇ x·f(x) dx</div>');
   P.push('<h2>3. Desarrollo de los ejemplos</h2>');
   ['lente', 'buffer', 'hub'].forEach((id, idx) => {
     const p = PRESETS[id], M = analyze(p.method, p.f, p.g, p.a, p.b, p.c);
     const R = riemann(M, p.N, 'medio');
-    P.push('<h3>3.' + (idx + 1) + ' ' + p.title + ' — método de ' + (p.method === 'discos' ? 'discos' : p.method === 'arandelas' ? 'arandelas' : 'cascarones cilíndricos') + '</h3>');
-    P.push('<p><b>Planteamiento.</b> ' + p.context + '</p><p><b>Límites.</b> ' + p.limits + '</p>');
-    P.push('<p><b>Elección del método.</b> ' + p.why + '</p>');
-    P.push('<div class="eq">V = ' + mh(M.expanded) + ' integrado en [' + short(M.a) + ', ' + short(M.b) + ']</div>');
-    if (M.F) P.push('<div class="eq">F(x) = ' + mh(M.F) + '</div>');
+    P.push('<h3>3.' + (idx + 1) + ' ' + p.title + '</h3>');
     P.push('<div class="eq"><b>V = ' + p.closed + ' ≈ ' + nf(M.V, 10) + ' ' + p.unitV + '</b></div>');
-    P.push('<p><small>Verificación por Pappus: ' + p.pappus + ' · Cuadratura de control: ' + nf(M.quad, 10) +
-      ' · discrepancia ' + Math.abs(M.quad - M.V).toExponential(2) + '</small></p>');
-    P.push('<p><b>Interpretación de ingeniería.</b> ' + p.eng[0] + ' → ' + p.eng[3] + '.</p>');
-    P.push('<p><small>Aproximación del software con N=' + p.N + ' (punto medio): ' + nf(R.total, 8) + ' ' + p.unitV +
-      ' · error relativo ' + (100 * Math.abs(M.V - R.total) / Math.abs(M.V)).toFixed(5) + ' %.</small></p>');
+    P.push('<p><small>Aproximación N=' + p.N + ': ' + nf(R.total, 8) + ' · error ' + (100 * Math.abs(M.V - R.total) / Math.abs(M.V)).toFixed(5) + ' %.</small></p>');
   });
-  P.push('<h3>3.4 Tabla de convergencia del caso abierto en el simulador</h3>');
-  P.push('<p>Modelo actual: <b>' + $('#methodBadge').textContent + '</b>, f(x)=' + S.f + (S.method !== 'discos' ? ', g(x)=' + S.g : '') +
-    ', [' + S.a + ', ' + S.b + '], eje ' + (S.method === 'cascarones' ? 'x' : 'y') + '=' + S.c + ', regla ' + RULE_NAME[S.rule] + '.</p>');
+  P.push('<h3>3.4 Tabla de convergencia del caso actual</h3>');
   P.push('<table><tr><th>N</th><th>V aproximado</th><th>error absoluto</th><th>error relativo %</th></tr>');
   [4, 8, 16, 32, 64, 128, 256].forEach(n => {
     const r = riemann(MODEL, n, S.rule), e = Math.abs(MODEL.V - r.total);
     P.push('<tr><td>' + n + '</td><td>' + nf(r.total, 8) + '</td><td>' + e.toExponential(3) + '</td><td>' + (100 * e / Math.abs(MODEL.V || 1)).toFixed(6) + '</td></tr>');
   });
-  P.push('</table>');
-  P.push('<h2>4. Lógica del código</h2><ul>');
-  P.push('<li><b>Parser:</b> tokeniza la expresión (con multiplicación implícita) y construye un árbol sintáctico; rechaza símbolos ajenos a x.</li>');
-  P.push('<li><b>Motor simbólico:</b> expande productos y potencias, aplica reducción de sen²/cos², agrupa términos semejantes e integra por reglas directas y por partes; devuelve F(x).</li>');
-  P.push('<li><b>Motor numérico:</b> suma de Riemann con cuatro reglas, con el aporte ΔV de cada elemento y el volumen acumulado.</li>');
-  P.push('<li><b>Validación:</b> comprueba b&gt;a, el orden de los radios, la posición del eje y el dominio; emite advertencias en lugar de resultados sin sentido.</li>');
-  P.push('<li><b>Geometría:</b> mallas de revolución por anillos; cada elemento es un tramo de cilindro con sus tapas, generado con la misma regla que el cálculo numérico.</li>');
-  P.push('<li><b>Render:</b> Canvas 2D con algoritmo del pintor, back-face culling, luz clave + relleno + rim, especular Blinn-Phong, niebla, bloom y partículas, en un único bucle requestAnimationFrame.</li></ul>');
-  P.push('<h2>5. Enlaces y accesos</h2><table><tr><th>Recurso</th><th>Dato</th></tr>');
-  P.push('<tr><td>Repositorio público</td><td>' + (d.repo || 'pendiente de publicar') + '</td></tr>');
-  P.push('<tr><td>Aplicación en la nube</td><td>' + (d.app || 'pendiente de publicar') + '</td></tr>');
-  P.push('<tr><td>Video de sustentación</td><td>' + (d.video || 'pendiente de grabar') + '</td></tr>');
-  P.push('<tr><td>Credenciales</td><td>No aplica: la aplicación es de acceso abierto, sin registro ni inicio de sesión.</td></tr></table>');
-  P.push('<h2>6. Conclusiones</h2><ul>');
-  P.push('<li>Los tres métodos son el mismo principio con distinta elección del elemento diferencial; la elección correcta depende de la geometría del corte y de la invertibilidad de la función, como muestra el caso del hub IoT.</li>');
-  P.push('<li>Deducir los límites a partir de la intersección de curvas es tan importante como integrar: un límite mal fijado invalida el resultado aunque la antiderivada sea correcta.</li>');
-  P.push('<li>La triple verificación —analítica, simbólica por software y por Pappus/cuadratura— confirmó los tres volúmenes con más de ocho cifras significativas.</li>');
-  P.push('<li>Se comprobó computacionalmente el orden de convergencia teórico: O(Δx²) en punto medio y trapecio frente a O(Δx) en los extremos.</li>');
-  P.push('<li>La vinculación con Sistemas es operativa: slicing de impresión 3D, booleanas de CAD y mallado de superficies son implementaciones discretas de estos métodos, y el volumen se traduce en masa, coste y tiempo de producción.</li></ul>');
-  P.push('<h2>7. Referencias</h2><ul>');
-  P.push('<li>Stewart, J. (2018). <i>Cálculo de una variable: Trascendentes tempranas</i> (8.ª ed.). Cengage. Cap. 6.2–6.3.</li>');
-  P.push('<li>Larson, R. y Edwards, B. (2016). <i>Cálculo, Tomo I</i> (10.ª ed.). Cengage.</li>');
-  P.push('<li>Thomas, G. B. (2015). <i>Cálculo. Una variable</i> (13.ª ed.). Pearson.</li>');
-  P.push('<li>Burden, R. y Faires, J. (2011). <i>Análisis Numérico</i> (9.ª ed.). Cengage.</li>');
-  P.push('<li>MDN Web Docs. <i>Canvas API</i> y <i>Web Audio API</i>. Mozilla.</li></ul>');
-  P.push('</body></html>');
+  P.push('</table></body></html>');
   return P.join('');
 }
 function exportReport() {
@@ -1261,13 +1224,8 @@ function exportReport() {
     toast('Informe generado. Ábrelo y usa Imprimir → Guardar como PDF.', 'ok');
   } catch (e) { toast('No se pudo generar el informe: ' + e.message, 'bad'); }
 }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   14. ASISTENTE PASO A PASO (con espaciado mejorado)
-   ══════════════════════════════════════════════════════════════════════════ */
 const TUTOR = {
-  step: 0, total: 11, auto: false, autoTimer: null, voice: true,
-  steps: [],
+  step: 0, total: 11, auto: false, autoTimer: null, voice: true, steps: [],
   build() {
     if (!MODEL || !RIE) return;
     const M = MODEL, P = PRESETS[S.caseId];
@@ -1275,7 +1233,6 @@ const TUTOR = {
     const axisEq = axis + ' = ' + short(M.c);
     const methodLabel = M.method === 'discos' ? 'discos' : M.method === 'arandelas' ? 'arandelas' : 'cascarones cilíndricos';
     const aS = mh(num(M.a)), bS = mh(num(M.b));
-    const fStr = M.fStr, gStr = M.gStr;
     const integral = M.method === 'discos'
       ? 'π ∫<sub>' + aS + '</sub><sup>' + bS + '</sup> [' + mh(M.fNode) + (M.c ? ' − ' + short(M.c) : '') + ']² dx'
       : M.method === 'arandelas'
@@ -1283,43 +1240,40 @@ const TUTOR = {
         : '2π ∫<sub>' + aS + '</sub><sup>' + bS + '</sup> (' + (M.c ? 'x − ' + short(M.c) : 'x') + ')·(' + mh(M.fNode) + ' − ' + mh(M.gNode) + ') dx';
     const dV = M.method === 'discos' ? 'ΔV = π·[f(x*) − c]²·Δx'
       : M.method === 'arandelas' ? 'ΔV = π·([R(x*) − c]² − [r(x*) − c]²)·Δx'
-      : 'ΔV = 2π·(x* − c)·[f(x*) − g(x*)]·Δx';
+        : 'ΔV = 2π·(x − c)·[f(x*) − g(x*)]·Δx';
     const closed = P ? P.closed : closedForm(M.V);
     const err = Math.abs(M.V - RIE.total), rel = 100 * err / Math.abs(M.V || 1);
-
     this.steps = [
       { t: 'Identificar el problema',
-        b: (P ? '<b>' + P.title + '.</b> ' + P.context : 'Modelo personalizado con f(x) = ' + fStr + (M.method !== 'discos' ? ' y g(x) = ' + gStr : '') + '.') +
-           '<div class="math">f(x) = ' + mh(M.fNode) + (M.method !== 'discos' ? '<br>g(x) = ' + mh(M.gNode) : '') + '</div>' +
-           '<div class="tip">💡 Primero entendemos qué pieza física estamos modelando y qué funciones describen su perfil.</div>' },
+        b: (P ? '<b>' + P.title + '.</b> ' + P.context : 'Modelo personalizado con f(x) = ' + M.fStr + (M.method !== 'discos' ? ' y g(x) = ' + M.gStr : '') + '.') +
+          '<div class="math">f(x) = ' + mh(M.fNode) + (M.method !== 'discos' ? '<br>g(x) = ' + mh(M.gNode) : '') + '</div>' +
+          '<div class="tip">💡 Primero entendemos qué pieza física estamos modelando y qué funciones describen su perfil.</div>' },
       { t: 'Determinar el eje de giro',
         b: 'El sólido se obtiene al girar la región alrededor del eje <b>' + axisEq + '</b>.' +
-           '<div class="math">Eje de revolución: ' + axisEq + '</div>' +
-           (M.method === 'cascarones' ? '<div class="tip">💡 Eje vertical ⇒ usaremos cascarones cilíndricos (franjas verticales).</div>' :
+          '<div class="math">Eje de revolución: ' + axisEq + '</div>' +
+          (M.method === 'cascarones' ? '<div class="tip">💡 Eje vertical ⇒ usaremos cascarones cilíndricos (franjas verticales).</div>' :
             '<div class="tip">💡 Eje horizontal ⇒ usaremos discos o arandelas (franjas horizontales).</div>') },
       { t: 'Fijar los límites de integración',
         b: 'El intervalo de integración es <b>[' + short(M.a) + ', ' + short(M.b) + ']</b>.' +
-           (P ? '<div class="math">[' + P.a + ', ' + P.b + ']</div>' +
-           '<div class="tip">💡 ' + P.limits + '</div>' :
-           '<div class="math">a = ' + short(M.a) + ', b = ' + short(M.b) + '</div>') +
-           (M.warns.length ? '<div class="warn">⚠ ' + M.warns.join(' ') + '</div>' : '') },
+          '<div class="math">a = ' + short(M.a) + ', b = ' + short(M.b) + '</div>' +
+          (M.warns.length ? '<div class="warn">⚠ ' + M.warns.join(' ') + '</div>' : '') },
       { t: 'Elegir el método adecuado',
         b: 'Aplicamos el <b>método de ' + methodLabel + '</b>.' +
-           (P ? '<div class="tip">💡 ' + P.why + '</div>' :
+          (P ? '<div class="tip">💡 ' + P.why + '</div>' :
             (M.method === 'cascarones' ? '<div class="tip">💡 Ventaja: no necesitamos despejar x de y = f(x).</div>' :
-             M.method === 'arandelas' ? '<div class="tip">💡 Hay una cavidad interior, por eso usamos arandelas y no discos.</div>' :
-             '<div class="tip">💡 La región toca al eje de giro, por eso basta con discos macizos.</div>')) },
+              M.method === 'arandelas' ? '<div class="tip">💡 Hay una cavidad interior, por eso usamos arandelas y no discos.</div>' :
+                '<div class="tip">💡 La región toca al eje de giro, por eso basta con discos macizos.</div>')) },
       { t: 'Plantear el elemento diferencial ΔV',
         b: 'Cada elemento diferencial tiene volumen:' +
-           '<div class="math hi">' + dV + '</div>' +
-           '<div class="tip">💡 Este es el "ladrillo" que vamos a sumar. Al pasar al límite Δx → 0 obtenemos la integral.</div>' },
+          '<div class="math hi">' + dV + '</div>' +
+          '<div class="tip">💡 Este es el "ladrillo" que vamos a sumar. Al pasar al límite Δx → 0 obtenemos la integral.</div>' },
       { t: 'Escribir la integral del volumen',
         b: 'Sumando todos los elementos y tomando el límite:' +
-           '<div class="math hi">V = ' + integral + '</div>' },
+          '<div class="math hi">V = ' + integral + '</div>' },
       { t: 'Expandir el integrando',
         b: 'Desarrollamos productos y potencias, y agrupamos términos semejantes:' +
-           '<div class="math">Integrando expandido:<br>' + mh(M.expanded) + '</div>' +
-           '<div class="tip">💡 Esto nos permite integrar término a término usando las reglas básicas.</div>' },
+          '<div class="math">Integrando expandido:<br>' + mh(M.expanded) + '</div>' +
+          '<div class="tip">💡 Esto nos permite integrar término a término usando las reglas básicas.</div>' },
       { t: 'Calcular la antiderivada F(x)',
         b: M.F
           ? 'El motor simbólico encuentra la primitiva:' +
@@ -1328,20 +1282,20 @@ const TUTOR = {
           : '<div class="warn">⚠ El integrando no tiene primitiva elemental con las reglas del motor. Se usará cuadratura numérica Gauss–Legendre como referencia.</div>' },
       { t: 'Aplicar el Teorema Fundamental del Cálculo',
         b: 'Evaluamos F en los extremos y restamos:' +
-           '<div class="math">V = F(' + bS + ') − F(' + aS + ')</div>' +
-           (M.F ? '<div class="math">V = ' + nf(evalNode(M.F, M.b), 8) + ' − (' + nf(evalNode(M.F, M.a), 8) + ')</div>' : '') },
+          '<div class="math">V = F(' + bS + ') − F(' + aS + ')</div>' +
+          (M.F ? '<div class="math">V = ' + nf(evalNode(M.F, M.b), 8) + ' − (' + nf(evalNode(M.F, M.a), 8) + ')</div>' : '') },
       { t: 'Obtener el resultado exacto',
         b: '<div class="result">V = ' + (closed ? closed + ' ≈ ' : '') + nf(M.V, 10) + ' ' + (P ? P.unitV : 'u³') + '</div>' +
-           '<div class="tip">💡 Verificación independiente — Cuadratura de control: ' + nf(M.quad, 10) +
-           ' · discrepancia ' + Math.abs(M.quad - M.V).toExponential(2) +
-           (P ? '<br>📐 Pappus: ' + P.pappus : '') + '</div>' },
+          '<div class="tip">💡 Verificación independiente — Cuadratura de control: ' + nf(M.quad, 10) +
+          ' · discrepancia ' + Math.abs(M.quad - M.V).toExponential(2) +
+          (P ? '<br>📐 Pappus: ' + P.pappus : '') + '</div>' },
       { t: 'Interpretación de ingeniería',
         b: (P ? '<b>' + P.eng[0] + '</b> → ' + P.eng[3] + '.' :
-            'El volumen calculado permite estimar masa, coste y tiempo de fabricación de la pieza modelada.') +
-           '<div class="math">Aproximación del software (N=' + S.N + ', ' + RULE_NAME[S.rule] + '):<br>' +
-           'V ≈ ' + nf(RIE.total, 8) + '</div>' +
-           '<div class="math">Error absoluto = ' + err.toExponential(3) + '<br>Error relativo = ' + rel.toFixed(5) + ' %</div>' +
-           '<div class="tip">✅ ¡Problema resuelto! Puedes volver a cualquier paso haciendo clic sobre él.</div>' }
+          'El volumen calculado permite estimar masa, coste y tiempo de fabricación de la pieza modelada.') +
+          '<div class="math">Aproximación del software (N=' + S.N + ', ' + RULE_NAME[S.rule] + '):<br>' +
+          'V ≈ ' + nf(RIE.total, 8) + '</div>' +
+          '<div class="math">Error absoluto = ' + err.toExponential(3) + '<br>Error relativo = ' + rel.toFixed(5) + ' %</div>' +
+          '<div class="tip">✅ ¡Problema resuelto! Puedes volver a cualquier paso haciendo clic sobre él.</div>' }
     ];
     this.total = this.steps.length;
     this.step = 0;
@@ -1351,8 +1305,8 @@ const TUTOR = {
     const body = $('#tutorBody'); if (!body || !this.steps.length) return;
     body.innerHTML = this.steps.map((s, i) =>
       '<div class="tutor-step ' + (i < this.step ? 'done' : i === this.step ? 'current' : '') + '" data-step="' + i + '">' +
-        '<div class="tutor-step-head"><span class="tutor-step-num">' + (i + 1) + '</span>' + s.t + '</div>' +
-        '<div class="tutor-step-body">' + s.b + '</div>' +
+      '<div class="tutor-step-head"><span class="tutor-step-num">' + (i + 1) + '</span>' + s.t + '</div>' +
+      '<div class="tutor-step-body">' + s.b + '</div>' +
       '</div>'
     ).join('');
     body.querySelectorAll('.tutor-step').forEach(el => {
@@ -1360,7 +1314,7 @@ const TUTOR = {
     });
     const dots = $('#tutorDots');
     if (dots) dots.innerHTML = this.steps.map((_, i) =>
-      '<span data-step="' + i + '" title="Paso ' + (i+1) + ': ' + this.steps[i].t + '" class="' + (i < this.step ? 'done' : i === this.step ? 'current' : '') + '"></span>'
+      '<span data-step="' + i + '" title="Paso ' + (i + 1) + ': ' + this.steps[i].t + '" class="' + (i < this.step ? 'done' : i === this.step ? 'current' : '') + '"></span>'
     ).join('');
     dots && dots.querySelectorAll('span').forEach(d => d.addEventListener('click', () => this.go(parseInt(d.dataset.step, 10))));
     const pct = ((this.step + 1) / this.total) * 100;
@@ -1372,11 +1326,7 @@ const TUTOR = {
     if (cur) cur.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     if (this.voice && window.speechSynthesis) this.speak(this.steps[this.step].t);
   },
-  go(i) {
-    this.step = clamp(Math.round(i), 0, this.total - 1);
-    this.render();
-    Sound.click();
-  },
+  go(i) { this.step = clamp(Math.round(i), 0, this.total - 1); this.render(); Sound.click(); },
   next() {
     if (this.step < this.total - 1) this.go(this.step + 1);
     else { this.stopAuto(); toast('¡Resolución completa!', 'ok'); Sound.chord(); }
@@ -1410,18 +1360,17 @@ const TUTOR = {
     if (!this.steps.length) return;
     const P = PRESETS[S.caseId];
     let md = '# Resolución paso a paso\n\n';
-    md += '**Problema:** ' + (P ? P.title : 'Modelo personalizado') + '\n\n';
-    md += '**Método:** ' + (MODEL.method === 'discos' ? 'Discos' : MODEL.method === 'arandelas' ? 'Arandelas' : 'Cascarones cilíndricos') + '\n\n';
+    md += '> Problema: ' + (P ? P.title : 'Modelo personalizado') + '\n\n';
+    md += '> Método: ' + (MODEL.method === 'discos' ? 'Discos' : MODEL.method === 'arandelas' ? 'Arandelas' : 'Cascarones cilíndricos') + '\n\n';
     md += '---\n\n';
     this.steps.forEach((s, i) => {
       md += '## Paso ' + (i + 1) + ': ' + s.t + '\n\n';
-      md += s.b.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ') + '\n\n';
+      md += s.b.replace(/<[^>]+>/g, '').replace(/ /g, ' ') + '\n\n';
     });
     download('asistente-pasos.md', md, 'text/markdown;charset=utf-8');
     toast('Pasos exportados a Markdown', 'ok');
   }
 };
-
 function bindTutor() {
   $('#tutorToggle').addEventListener('click', () => {
     const t = $('#tutor');
@@ -1451,7 +1400,6 @@ function bindTutor() {
     else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); TUTOR.prev(); }
   });
 }
-
 const _origInvalidate = invalidate;
 invalidate = function (kind) {
   _origInvalidate(kind);
@@ -1459,7 +1407,6 @@ invalidate = function (kind) {
     requestAnimationFrame(() => { if (MODEL && RIE) TUTOR.build(); });
   }
 };
-
 function applyPreset(id, announce) {
   const p = PRESETS[id]; if (!p) return;
   S.caseId = id; S.method = p.method; S.f = p.f; S.g = p.g; S.a = p.a; S.b = p.b; S.c = p.c;
@@ -1491,7 +1438,7 @@ function bindUI() {
   });
   $$('#methodSeg button').forEach(b => b.addEventListener('click', () => {
     S.method = b.dataset.method; S.caseId = 'custom'; $('#caseSelect').value = 'custom';
-    if (S.method === 'cascarones' && S.c > constVal(parse(S.a) || num(0))) { S.c = 0; $('#cRange').value = 0; $('#cNum').value = 0; }
+    if (S.method === 'cascarones' && S.c > constVal(parse(S.a || '0') || num(0))) { S.c = 0; $('#cRange').value = 0; $('#cNum').value = 0; }
     Sound.click(); invalidate('math'); saveState();
   }));
   const textBind = (id, key) => $('#' + id).addEventListener('input', e => {
@@ -1720,7 +1667,6 @@ function observeSections() {
   }, { threshold: 0.12 });
   $$('.mcard,.ccard').forEach(c => reveal.observe(c));
 }
-
 let last = 0, playAcc = 0, running = true;
 function frame(ts) {
   requestAnimationFrame(frame);
